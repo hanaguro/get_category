@@ -1,0 +1,124 @@
+#!/bin/bash
+
+# 取得するファイルのURL
+URL="https://repository.plamolinux.org/pub/linux/Plamo/Plamo-8.x/x86_64/plamo/01_minimum/"
+# ホスト名とパスを抽出
+HOST="repository.plamolinux.org"
+DIR_PATH="/pub/linux/Plamo/Plamo-8.x/x86_64/plamo/01_minimum/" # 最後の'/'が無いとリダイレクトを追えない
+
+# HTTPS リクエストを作成
+REQUEST=$'GET '"$DIR_PATH"$' HTTP/1.1\r\nHost: '"$HOST"$'\r\nConnection: close\r\n\r\n'
+
+# 一時ファイルの作成
+TEMP_FILE=$(mktemp)
+
+# OpenSSL を使用して HTTPS リクエストを送信し、応答を一時ファイルに保存
+openssl s_client -quiet -connect "$HOST:443" <<EOF > "$TEMP_FILE"
+$REQUEST
+EOF
+
+# HTTP ヘッダーの終了位置を特定
+HEADER_END=$(grep -a -b -o $'\r\n\r\n' "$TEMP_FILE" | head -n 1 | cut -d: -f1)
+BODY_START=$((HEADER_END + 4))
+
+# HTTPステータスコードを取得
+#STATUS_CODE=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'HTTP/1.1 \K[0-9]+')
+STATUS_CODE=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'HTTP/1.1 [0-9]+')
+
+# リダイレクト処理
+if [[ "$STATUS_CODE" == "301" || "$STATUS_CODE" == "302" ]]; then
+#    NEW_URL=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'Location: \K.*')
+    NEW_URL=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'Location: .*' | cut -d' ' -f2)
+    echo "Redirected to: $NEW_URL"
+
+    # 新しいURLのホスト名とパスを抽出
+    HOST=$(echo "$NEW_URL" | awk -F/ '{print $3}')
+    DIR_PATH=$(echo "$NEW_URL" | awk -F"$HOST" '{print $2}')
+
+    # 新しいHTTPSリクエストを作成
+    REQUEST=$'GET '"$DIR_PATH"$' HTTP/1.1\r\nHost: '"$HOST"$'\r\nConnection: close\r\n\r\n'
+
+    # 一時ファイルを再作成
+    TEMP_FILE=$(mktemp)
+
+    # OpenSSL を使用して新しいHTTPSリクエストを送信し、応答を一時ファイルに保存
+    openssl s_client -quiet -connect "$HOST:443" <<EOF > "$TEMP_FILE"
+$REQUEST
+EOF
+
+    # 一時ファイルの内容を表示
+    echo "Response received after redirect:"
+    xxd "$TEMP_FILE"
+
+    # HTTP ヘッダーの終了位置を再特定
+    HEADER_END=$(grep -a -b -o $'\r\n\r\n' "$TEMP_FILE" | head -n 1 | cut -d: -f1)
+    BODY_START=$((HEADER_END + 4))
+fi
+
+echo "HEADER_END: $HEADER_END"
+echo "BODY_START: $BODY_START"
+
+# レスポンスボディ部分を抽出して一時ファイルに保存
+BODY_FILE=$(mktemp)
+dd if="$TEMP_FILE" of="$BODY_FILE" bs=1 skip=$BODY_START status=none
+
+# 一時ファイルの内容を表示
+echo "Body content received:"
+xxd "$BODY_FILE"
+
+# レスポンスボディからwget-で始まるファイル名を抽出
+FILE_NAMES=$(grep -o 'wget-.*[^">]' "$BODY_FILE" | awk -F'>' '{print $0}' | sed 's/[">].*//' | sort | uniq | tail -n1)
+
+
+# 一時ファイルを削除
+rm "$TEMP_FILE" "$BODY_FILE"
+
+echo "Files starting with wget-:"
+echo "$FILE_NAMES"
+
+#################################################
+FULL_PATH=$DIR_PATH$FILE_NAMES
+
+# HTTPS リクエストを作成
+REQUEST=$'GET '"$FULL_PATH"$' HTTP/1.1\r\nHost: '"$HOST"$'\r\nConnection: close\r\n\r\n'
+
+# 一時ファイルの作成
+TEMP_FILE=$(mktemp)
+
+echo -e "$REQUEST"
+
+# OpenSSL を使用して HTTPS リクエストを送信し、応答を一時ファイルに保存
+openssl s_client -quiet -connect "$HOST:443" <<EOF > "$TEMP_FILE"
+$REQUEST
+EOF
+
+# 一時ファイルの内容を表示
+echo "Response received:"
+xxd "$TEMP_FILE"
+
+# HTTP ヘッダーの終了位置を特定
+HEADER_END=$(grep -a -b -o $'^\r\n$' "$TEMP_FILE" | head -n 1 | cut -d: -f1)
+BODY_START=$((HEADER_END + 2))
+echo "HEADER_END: $HEADER_END"
+echo "BODY_START: $BODY_START"
+
+# ヘッダー部分を表示
+echo "Headers received:"
+head -c $BODY_START "$TEMP_FILE" | xxd
+
+# ボディ部分のデバッグ表示
+echo "Body part starts at byte $BODY_START"
+BODY_LENGTH=$(( $(wc -c < "$TEMP_FILE") - BODY_START ))
+echo "Body length: $BODY_LENGTH bytes"
+
+dd if="$TEMP_FILE" of="$FILE_NAMES" bs=1 skip=$BODY_START status=none
+
+# 一時ファイルを削除
+rm "$TEMP_FILE"
+
+echo "File downloaded: $FILE_NAMES"
+
+# ダウンロードしたファイルの内容を表示
+echo "Downloaded file content:"
+xxd "$FILE_NAMES"
+

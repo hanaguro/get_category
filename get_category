@@ -116,6 +116,7 @@ if $OPTION_AUTOINSTALL && $OPTION_DOWNLOAD; then
         exit 1
 fi
 
+
 # 数値範囲チェック
 if [ ${#NUMBERS[@]} -eq 0 -a OPTON_PYTHON = false -a OPTION_GET_PKGINFO = false ]; then
         echo "Error: Please specify numbers in the range 1-16."
@@ -123,14 +124,23 @@ if [ ${#NUMBERS[@]} -eq 0 -a OPTON_PYTHON = false -a OPTION_GET_PKGINFO = false 
 fi
 
 # rootになるか確認
-if [ $(id -u) -ne 0 ]; then
-  read -p "Do you want to install as root? [y/N] " ans
-  if [ "x$ans" == "xY" -o "x$ans" == "xy" ]; then
-          export OPTION_DEBUG OPTION_PYTHON OPTION_DOWNLOAD OPTION_LOCALBLOCK OPTION_AUTOINSTALL OPTION_GET_PKGINFO
-          export NUMBERS_STR=$(IFS=,; echo "${NUMBERS[*]}")
-          export LOCALBLOCK_ARGS_STR=$(IFS=,; echo "${LOCALBLOCK_ARGS[*]}")
-    exec /bin/su -c "$0 $*"
-  fi
+if $OPTION_AUTOINSTALL || [ ! -e /var/log/packages/get_pkginfo ] || [ ! -e /var/log/packages/Python ]; then
+        if [ $(id -u) -ne 0 ]; then
+          read -p "Do you want to install as root? [y/N] " ans
+          if [ "x$ans" == "xY" -o "x$ans" == "xy" ]; then
+                  export OPTION_DEBUG OPTION_PYTHON OPTION_DOWNLOAD OPTION_LOCALBLOCK OPTION_AUTOINSTALL OPTION_GET_PKGINFO
+                  export NUMBERS_STR=$(IFS=,; echo "${NUMBERS[*]}")
+                  export LOCALBLOCK_ARGS_STR=$(IFS=,; echo "${LOCALBLOCK_ARGS[*]}")
+            exec /bin/su -c "$0 $*"
+          fi
+        fi
+fi
+
+if $OPTION_AUTOINSTALL ;then
+        if [ $(id -u) -ne 0 ]; then
+                echo "Please become root if you are using the -a/--autoinstall option."
+                exit 1
+        fi
 fi
 
 pkgname_by_openssl() {
@@ -280,7 +290,7 @@ if [ $OPTION_LOCALBLOCK == true ]; then
 fi
 
 if [ ${#NUMBERS[@]} -eq 0 ]; then
-       get_pkginfo $OPTIONS
+       yes | get_pkginfo $OPTIONS
 fi
 
 for number in "${NUMBERS[@]}"; do
@@ -339,7 +349,7 @@ for number in "${NUMBERS[@]}"; do
                        ;;
        esac
 
-       get_pkginfo $OPTIONS $OPTIONS_NUM
+       yes | get_pkginfo $OPTIONS $OPTIONS_NUM
 done
 
 exit 0

@@ -1,124 +1,345 @@
 #!/bin/bash
 
-# 取得するファイルのURL
-URL="https://repository.plamolinux.org/pub/linux/Plamo/Plamo-8.x/x86_64/plamo/01_minimum/"
-# ホスト名とパスを抽出
+# ホスト名とパス
 HOST="repository.plamolinux.org"
-DIR_PATH="/pub/linux/Plamo/Plamo-8.x/x86_64/plamo/01_minimum/" # 最後の'/'が無いとリダイレクトを追えない
+MINIMUM_DIR_PATH="/pub/linux/Plamo/Plamo-8.x/x86_64/plamo/01_minimum/" # 最後の'/'が無いとリダイレクトを追えない
+DEVEL_DIR_PATH="/pub/linux/Plamo/Plamo-8.x/x86_64/plamo/02_devel/" # 最後の'/'が無いとリダイレクトを追えない
 
-# HTTPS リクエストを作成
-REQUEST=$'GET '"$DIR_PATH"$' HTTP/1.1\r\nHost: '"$HOST"$'\r\nConnection: close\r\n\r\n'
+show_help() {
+        echo "Usage: $0 [OPTIONS] [NUMBERS]"
+        echo "Options:"
+        echo "  -a, --autoinstall       Enable auto installation"
+        echo "  -d, --download          Enable download"
+        echo "  --debug                 Enable debug mode"
+        echo "  -l, --localblock ARGS   Specify local blocks"
+        echo "  -h, --help              Show this help message and exit"
+        echo "  -p, --python            Download and Install Python only"
+        echo "  -g, --get_pkginfo       Download and Install get_pkginfo only"
+        echo "  NUMBERS                 Specify numbers in the range 0-16"
+        echo "     Example: $0 2 4 6-8"
+        echo ""
+        echo "Plamo Linux Category"
+        echo "  0: 00_base 1: 01_minimum 2: 02_devel 3: 03_libs 4: 04_x11"
+        echo "  5: 05_ext 6: 06_xapps 7: 07_multimedia 8: 08_daemons"
+        echo "  9: 09_printings 10: 10_xfce 11: 11_lxqt 12: 12_mate"
+        echo "  13: 13_tex 14: 14_libreoffice 15: 15_kernelsrc 16: 16_virtualization"
+}
 
-# 一時ファイルの作成
-TEMP_FILE=$(mktemp)
+# 初期化
+: "${OPTION_AUTOINSTALL:=false}"
+: "${OPTION_DOWNLOAD:=false}"
+: "${OPTION_DEBUG:=false}"
+: "${OPTION_LOCALBLOCK:=false}"
+: "${OPTION_PYTHON:=false}"
+: "${OPTION_GET_PKGINFO:=false}"
+: "${LOCALBLOCK_ARGS:=()}"
+: "${NUMBERS:=()}"
 
-# OpenSSL を使用して HTTPS リクエストを送信し、応答を一時ファイルに保存
-openssl s_client -quiet -connect "$HOST:443" <<EOF > "$TEMP_FILE"
-$REQUEST
-EOF
-
-# HTTP ヘッダーの終了位置を特定
-HEADER_END=$(grep -a -b -o $'\r\n\r\n' "$TEMP_FILE" | head -n 1 | cut -d: -f1)
-BODY_START=$((HEADER_END + 4))
-
-# HTTPステータスコードを取得
-#STATUS_CODE=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'HTTP/1.1 \K[0-9]+')
-STATUS_CODE=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'HTTP/1.1 [0-9]+')
-
-# リダイレクト処理
-if [[ "$STATUS_CODE" == "301" || "$STATUS_CODE" == "302" ]]; then
-#    NEW_URL=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'Location: \K.*')
-    NEW_URL=$(head -c $HEADER_END "$TEMP_FILE" | grep -oE 'Location: .*' | cut -d' ' -f2)
-    echo "Redirected to: $NEW_URL"
-
-    # 新しいURLのホスト名とパスを抽出
-    HOST=$(echo "$NEW_URL" | awk -F/ '{print $3}')
-    DIR_PATH=$(echo "$NEW_URL" | awk -F"$HOST" '{print $2}')
-
-    # 新しいHTTPSリクエストを作成
-    REQUEST=$'GET '"$DIR_PATH"$' HTTP/1.1\r\nHost: '"$HOST"$'\r\nConnection: close\r\n\r\n'
-
-    # 一時ファイルを再作成
-    TEMP_FILE=$(mktemp)
-
-    # OpenSSL を使用して新しいHTTPSリクエストを送信し、応答を一時ファイルに保存
-    openssl s_client -quiet -connect "$HOST:443" <<EOF > "$TEMP_FILE"
-$REQUEST
-EOF
-
-    # 一時ファイルの内容を表示
-    echo "Response received after redirect:"
-    xxd "$TEMP_FILE"
-
-    # HTTP ヘッダーの終了位置を再特定
-    HEADER_END=$(grep -a -b -o $'\r\n\r\n' "$TEMP_FILE" | head -n 1 | cut -d: -f1)
-    BODY_START=$((HEADER_END + 4))
+# 環境変数から引数で渡された数値を取得
+if [ ! -z "$NUMBERS_STR" ]; then
+    IFS=',' read -r -a NUMBERS <<< "$NUMBERS_STR"
 fi
 
-echo "HEADER_END: $HEADER_END"
-echo "BODY_START: $BODY_START"
+if [ ! -z "$LOCALBLOCK_ARGS" ]; then
+    IFS=',' read -r -a LOCALBLOCK_ARGS <<< "$LOCALBLOCK_ARGS_STR"
+fi
 
-# レスポンスボディ部分を抽出して一時ファイルに保存
-BODY_FILE=$(mktemp)
-dd if="$TEMP_FILE" of="$BODY_FILE" bs=1 skip=$BODY_START status=none
+# 引数解析
+while [[ $# -gt 0 ]]; do
+        case $1 in
+                -a|--autoinstall)
+                        OPTION_AUTOINSTALL=true
+                        shift
+                        ;;
+                -d|--download)
+                        OPTION_DOWNLOAD=true
+                        shift
+                        ;;
+                -p|--python)
+                        OPTION_PYTHON=true
+                        shift
+                        ;;
+                -g|--get_pkginfo)
+                        OPTION_GET_PKGINFO=true
+                        shift
+                        ;;
+                --debug)
+                        OPTION_DEBUG=true
+                        shift
+                        ;;
+                -l|--localblock)
+                        OPTION_LOCALBLOCK=true
+                        shift
+                        while [[ $# -gt 0 && ! $1 =~ ^- ]]; do
+                                LOCALBLOCK_ARGS+=("$1")
+                                shift
+                        done
+                        ;;
+                -h|--help)
+                        show_help
+                        exit 0
+                        ;;
+                -*)
+                        echo "Unknown option: $1"
+                        show_help
+                        exit 1
+                        ;;
+                *)
+                        if [[ $1 =~ ^[0-9]+-[0-9]+$ ]]; then
+                                IFS='-' read -r start end <<< "$1"
+                                if (( start < 0 || end > 16 || start > end )); then
+                                        echo "Error: Please specify numbers in the range 0-16."
+                                        exit 1
+                                fi
+                                for (( i = start; i <= end; i++ )); do
+                                        NUMBERS+=("$i")
+                                done
+                        elif [[ $1 =~ ^[0-9]+$ ]]; then
+                                if (( $1 < 0 || $1 > 16 )); then
+                                        echo "Error: Please specify numbers in the range 0-16."
+                                        exit 1
+                                fi
+                                NUMBERS+=("$1")
+                        else
+                                echo "Invalid argument: $1"
+                                show_help
+                                exit 1
+                        fi
+                        shift
+                        ;;
+        esac
+done
 
-# 一時ファイルの内容を表示
-echo "Body content received:"
-xxd "$BODY_FILE"
+# -a と -d は同時に使用できない
+if $OPTION_AUTOINSTALL && $OPTION_DOWNLOAD; then
+        echo "Error: Options -a and -d cannot be used together."
+        exit 1
+fi
 
-# レスポンスボディからwget-で始まるファイル名を抽出
-FILE_NAMES=$(grep -o 'wget-.*[^">]' "$BODY_FILE" | awk -F'>' '{print $0}' | sed 's/[">].*//' | sort | uniq | tail -n1)
+# 数値範囲チェック
+if [ ${#NUMBERS[@]} -eq 0 -a OPTON_PYTHON = false -a OPTION_GET_PKGINFO = false ]; then
+        echo "Error: Please specify numbers in the range 1-16."
+        exit 1
+fi
 
+# rootになるか確認
+if [ $(id -u) -ne 0 ]; then
+  read -p "Do you want to install as root? [y/N] " ans
+  if [ "x$ans" == "xY" -o "x$ans" == "xy" ]; then
+          export OPTION_DEBUG OPTION_PYTHON OPTION_DOWNLOAD OPTION_LOCALBLOCK OPTION_AUTOINSTALL OPTION_GET_PKGINFO
+          export NUMBERS_STR=$(IFS=,; echo "${NUMBERS[*]}")
+          export LOCALBLOCK_ARGS_STR=$(IFS=,; echo "${LOCALBLOCK_ARGS[*]}")
+    exec /bin/su -c "$0 $*"
+  fi
+fi
 
-# 一時ファイルを削除
-rm "$TEMP_FILE" "$BODY_FILE"
+pkgname_by_openssl() {
+        local host=$1
+        local dir_path=$2
+        local file_name_ext=$3
 
-echo "Files starting with wget-:"
-echo "$FILE_NAMES"
+    # HTTPS リクエストを作成
+    local request=$'GET '"$dir_path"$' HTTP/1.1\r\nHost: '"$host"$'\r\nConnection: close\r\n\r\n'
 
-#################################################
-FULL_PATH=$DIR_PATH$FILE_NAMES
+    # 一時ファイルの作成
+    local temp_file=$(mktemp)
 
-# HTTPS リクエストを作成
-REQUEST=$'GET '"$FULL_PATH"$' HTTP/1.1\r\nHost: '"$HOST"$'\r\nConnection: close\r\n\r\n'
-
-# 一時ファイルの作成
-TEMP_FILE=$(mktemp)
-
-echo -e "$REQUEST"
-
-# OpenSSL を使用して HTTPS リクエストを送信し、応答を一時ファイルに保存
-openssl s_client -quiet -connect "$HOST:443" <<EOF > "$TEMP_FILE"
-$REQUEST
+    # OpenSSL を使用して HTTPS リクエストを送信し、応答を一時ファイルに保存
+    openssl s_client -quiet -connect "$host:443" <<EOF > "$temp_file"
+$request
 EOF
 
-# 一時ファイルの内容を表示
-echo "Response received:"
-xxd "$TEMP_FILE"
+    # HTTP ヘッダーの終了位置を特定
+    local header_end=$(grep -a -b -o $'\r\n\r\n' "$temp_file" | head -n 1 | cut -d: -f1)
+    local body_start=$((header_end + 4))
 
-# HTTP ヘッダーの終了位置を特定
-HEADER_END=$(grep -a -b -o $'^\r\n$' "$TEMP_FILE" | head -n 1 | cut -d: -f1)
-BODY_START=$((HEADER_END + 2))
-echo "HEADER_END: $HEADER_END"
-echo "BODY_START: $BODY_START"
+    # HTTPステータスコードを取得
+    local status_code=$(head -c $header_end "$temp_file" | grep -oE 'HTTP/1.1 [0-9]+')
 
-# ヘッダー部分を表示
-echo "Headers received:"
-head -c $BODY_START "$TEMP_FILE" | xxd
+    # リダイレクト処理
+    if [[ "$status_code" == "301" || "$status_code" == "302" ]]; then
+            local new_url=$(head -c $header_end "$temp_file" | grep -oE 'Location: .*' | cut -d' ' -f2)
 
-# ボディ部分のデバッグ表示
-echo "Body part starts at byte $BODY_START"
-BODY_LENGTH=$(( $(wc -c < "$TEMP_FILE") - BODY_START ))
-echo "Body length: $BODY_LENGTH bytes"
+        # 新しいURLのホスト名とパスを抽出
+        local host=$(echo "$new_url" | awk -F/ '{print $3}')
+        local minimum_dir_path=$(echo "$new_url" | awk -F"$host" '{print $2}')
 
-dd if="$TEMP_FILE" of="$FILE_NAMES" bs=1 skip=$BODY_START status=none
+        # 新しいHTTPSリクエストを作成
+        local request=$'GET '"$minimum_dir_path"$' HTTP/1.1\r\nHost: '"$host"$'\r\nConnection: close\r\n\r\n'
 
-# 一時ファイルを削除
-rm "$TEMP_FILE"
+        # OpenSSL を使用して新しいHTTPSリクエストを送信し、応答を一時ファイルに保存
+        openssl s_client -quiet -connect "$host:443" <<EOF > "$temp_file"
+$request
+EOF
 
-echo "File downloaded: $FILE_NAMES"
+        # HTTP ヘッダーの終了位置を再特定
+        header_end=$(grep -a -b -o $'\r\n\r\n' "$temp_file" | head -n 1 | cut -d: -f1)
+        body_start=$((header_end + 4))
+    fi
 
-# ダウンロードしたファイルの内容を表示
-echo "Downloaded file content:"
-xxd "$FILE_NAMES"
+    # レスポンスボディ部分を抽出して一時ファイルに保存
+    local body_file=$(mktemp)
+    dd if="$temp_file" of="$body_file" bs=1 skip=$body_start status=none
 
+    # レスポンスボディから$file_name_extで始まるファイル名を抽出
+    local file_name=$(grep -o "$file_name_ext-[^\">]*" "$body_file" | sed 's/<\/a$//' | sort | uniq | tail -n1)
+
+
+    # 一時ファイルを削除
+    rm "$temp_file" "$body_file"
+
+    echo $file_name
+}
+
+download_filename_by_openssl() {
+        local host=$1 
+        local dir_path=$2
+        local file_name=$3
+
+        local full_path=$dir_path$file_name
+
+    # HTTPS リクエストを作成
+    local request=$'GET '"$full_path"$' HTTP/1.1\r\nHost: '"$host"$'\r\nConnection: close\r\n\r\n'
+
+    # 一時ファイルの作成
+    local temp_file=$(mktemp)
+
+    # OpenSSL を使用して HTTPS リクエストを送信し、応答を一時ファイルに保存
+    openssl s_client -quiet -connect "$host:443" <<EOF > "$temp_file"
+$request
+EOF
+
+    # HTTP ヘッダーの終了位置を特定
+    local header_end=$(grep -a -b -o $'^\r\n$' "$temp_file" | head -n 1 | cut -d: -f1) # '^\r\n$' でないとヒットしない
+    local body_start=$((header_end + 2))
+
+    # ヘッダー部分を表示
+    head -c $body_start "$temp_file" | xxd
+
+    # ボディ部分のデバッグ表示
+    local body_length=$(( $(wc -c < "$temp_file") - body_start ))
+
+    dd if="$temp_file" of="$file_name" bs=1 skip=$body_start status=none
+
+    # 一時ファイルを削除
+    rm "$temp_file"
+}
+
+if [ ! -e /var/log/packages/Python ] && [ $OPTION_GET_PKGINFO == false ]; then
+        # Pythonのダウンロードとインストール
+        PYTHON_FILE_NAME=$(pkgname_by_openssl $HOST $DEVEL_DIR_PATH "Python")
+        if [ -e $PYTHON_FILE_NAME ]; then
+                echo "$PYTHON_FILE_NAME is already exist"
+        else
+                echo "Downloading Python package: $PYTHON_FILE_NAME"
+                download_filename_by_openssl $HOST $DEVEL_DIR_PATH $PYTHON_FILE_NAME
+        fi
+
+        if [ "$(id -u)" -eq 0 ]; then
+                # Pythonとget_pkginfoをインストール
+                installpkg $PYTHON_FILE_NAME
+        fi
+fi 
+
+if [ ! -e /var/log/packages/get_pkginfo ] && [ $OPTION_PYTHON = false ]; then
+        # get_pkginfoのダウンロードとインストール
+        GET_PKGINFO_FILE_NAME=$(pkgname_by_openssl $HOST $MINIMUM_DIR_PATH "get_pkginfo")
+        if [ -e $GET_PKGINFO_FILE_NAME ]; then
+                echo "$GET_PKGINFO_FILE_NAME is already exist"
+        else
+                echo "Downloading get_pkginfo package: $GET_PKGINFO_FILE_NAME"
+                download_filename_by_openssl $HOST $MINIMUM_DIR_PATH $GET_PKGINFO_FILE_NAME
+        fi
+
+        if [ "$(id -u)" -eq 0 ]; then
+                # get_pkginfoをインストール
+                installpkg $GET_PKGINFO_FILE_NAME
+        fi
+fi 
+
+# Pythonかget_pkginfoが無いか、get_pkginfoまたはPythonだけをインストール指示された場合は終了
+if [ ! -e /var/log/packages/Python ] || [ ! -e /var/log/packages/get_pkginfo ] || [ $OPTION_GET_PKGINFO == true ] || [ $OPTION_PYTHON == true ]; then
+        exit 0
+fi
+
+OPTIONS=""
+
+if [ $OPTION_AUTOINSTALL == true ]; then
+        OPTIONS+="-a "
+fi
+
+if [ $OPTION_DOWNLOAD == true ]; then
+        OPTIONS+="-d "
+fi
+
+if [ $OPTION_LOCALBLOCK == true ]; then
+        OPTIONS+="-l "
+        for block in "${LOCALBLOCK_ARGS[@]}"; do
+                OPTIONS+="$block "
+        done
+fi
+
+if [ ${#NUMBERS[@]} -eq 0 ]; then
+       get_pkginfo $OPTIONS
+fi
+
+for number in "${NUMBERS[@]}"; do
+       OPTIONS_NUM=""
+       case $number in 
+               0)
+                       OPTIONS_NUM="-c 00_base "
+                       ;;
+               1) 
+                       OPTIONS_NUM="-c 01_minimum "
+                       ;;
+               2)
+                       OPTIONS_NUM="-c 02_devel "
+                       ;;
+               3)
+                       OPTIONS_NUM="-c 03_libs "
+                       ;;
+               4)
+                       OPTIONS_NUM="-c 04_x11 "
+                       ;;
+               5)
+                       OPTIONS_NUM="-c 05_ext "
+                       ;;
+               6)
+                       OPTIONS_NUM="-c 06_xapps "
+                       ;;
+               7)
+                       OPTIONS_NUM="-c 07_multimedia "
+                       ;;
+               8)
+                       OPTIONS_NUM="-c 08_daemons "
+                       ;;
+               9)
+                       OPTIONS_NUM="-c 09_printings "
+                       ;;
+               10)
+                       OPTIONS_NUM="-c 10_xfce "
+                       ;;
+               11)
+                       OPTIONS_NUM="-c 11_lxqt "
+                       ;;
+               12)
+                       OPTIONS_NUM="-c 12_mate "
+                       ;;
+               13)
+                       OPTIONS_NUM="-c 13_tex "
+                       ;;
+               14)
+                       OPTIONS_NUM="-c 14_libreoffice " 
+                       ;;
+               15)
+                       OPTIONS_NUM="-c 15_kernelsrc "
+                       ;;
+               16)
+                       OPTIONS_NUM="-c 16_virtualization "
+                       ;;
+       esac
+
+       get_pkginfo $OPTIONS $OPTIONS_NUM
+done
+
+exit 0

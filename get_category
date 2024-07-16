@@ -32,15 +32,15 @@ show_help() {
 : "${OPTION_LOCALBLOCK:=false}"
 : "${OPTION_PYTHON:=false}"
 : "${OPTION_GET_PKGINFO:=false}"
-: "${LOCALBLOCK_ARGS:=()}"
-: "${NUMBERS:=()}"
+LOCALBLOCK_ARGS=()
+NUMBERS=()
 
 # 環境変数から引数で渡された数値を取得
 if [ ! -z "$NUMBERS_STR" ]; then
     IFS=',' read -r -a NUMBERS <<< "$NUMBERS_STR"
 fi
 
-if [ ! -z "$LOCALBLOCK_ARGS" ]; then
+if [ ! -z "$LOCALBLOCK_ARGS_STR" ]; then
     IFS=',' read -r -a LOCALBLOCK_ARGS <<< "$LOCALBLOCK_ARGS_STR"
 fi
 
@@ -117,17 +117,11 @@ if $OPTION_AUTOINSTALL && $OPTION_DOWNLOAD; then
 fi
 
 
-# 数値範囲チェック
-if [ ${#NUMBERS[@]} -eq 0 -a OPTON_PYTHON = false -a OPTION_GET_PKGINFO = false ]; then
-        echo "Error: Please specify numbers in the range 1-16."
-        exit 1
-fi
-
 # rootになるか確認
 if $OPTION_AUTOINSTALL || [ ! -e /var/log/packages/get_pkginfo ] || [ ! -e /var/log/packages/Python ]; then
         if [ $(id -u) -ne 0 ]; then
           read -p "Do you want to install as root? [y/N] " ans
-          if [ "x$ans" == "xY" -o "x$ans" == "xy" ]; then
+          if [ "x$ans" = "xY" ] || [ "x$ans" = "xy" ]; then
                   export OPTION_DEBUG OPTION_PYTHON OPTION_DOWNLOAD OPTION_LOCALBLOCK OPTION_AUTOINSTALL OPTION_GET_PKGINFO
                   export NUMBERS_STR=$(IFS=,; echo "${NUMBERS[*]}")
                   export LOCALBLOCK_ARGS_STR=$(IFS=,; echo "${LOCALBLOCK_ARGS[*]}")
@@ -136,11 +130,17 @@ if $OPTION_AUTOINSTALL || [ ! -e /var/log/packages/get_pkginfo ] || [ ! -e /var/
         fi
 fi
 
+# -a は root 以外には使用できない
 if $OPTION_AUTOINSTALL ;then
         if [ $(id -u) -ne 0 ]; then
                 echo "Please become root if you are using the -a/--autoinstall option."
                 exit 1
         fi
+fi
+
+if $OPTION_DEBUG ; then
+        echo "NUMBERS = ${NUMBERS[*]}"
+        echo "LOCALBLOCK_ARGS = ${LOCALBLOCK_ARGS[*]}"
 fi
 
 pkgname_by_openssl() {
@@ -167,7 +167,7 @@ EOF
     local status_code=$(head -c $header_end "$temp_file" | grep -oE 'HTTP/1.1 [0-9]+')
 
     # リダイレクト処理
-    if [[ "$status_code" == "301" || "$status_code" == "302" ]]; then
+    if [ "$status_code" = "301" ] || [ "$status_code" = "302" ]; then
             local new_url=$(head -c $header_end "$temp_file" | grep -oE 'Location: .*' | cut -d' ' -f2)
 
         # 新しいURLのホスト名とパスを抽出
@@ -223,8 +223,10 @@ EOF
     local header_end=$(grep -a -b -o $'^\r\n$' "$temp_file" | head -n 1 | cut -d: -f1) # '^\r\n$' でないとヒットしない
     local body_start=$((header_end + 2))
 
-    # ヘッダー部分を表示
-    head -c $body_start "$temp_file" | xxd
+    if $OPTION_DEGUG; then
+            # ヘッダー部分を表示
+            head -c $body_start "$temp_file" | xxd
+    fi
 
     # ボディ部分のデバッグ表示
     local body_length=$(( $(wc -c < "$temp_file") - body_start ))
@@ -235,7 +237,7 @@ EOF
     rm "$temp_file"
 }
 
-if [ ! -e /var/log/packages/Python ] && [ $OPTION_GET_PKGINFO == false ]; then
+if [ ! -e /var/log/packages/Python ] && [ "$OPTION_GET_PKGINFO" = false ]; then
         # Pythonのダウンロードとインストール
         PYTHON_FILE_NAME=$(pkgname_by_openssl $HOST $DEVEL_DIR_PATH "Python")
         if [ -e $PYTHON_FILE_NAME ]; then
@@ -251,7 +253,7 @@ if [ ! -e /var/log/packages/Python ] && [ $OPTION_GET_PKGINFO == false ]; then
         fi
 fi 
 
-if [ ! -e /var/log/packages/get_pkginfo ] && [ $OPTION_PYTHON = false ]; then
+if [ ! -e /var/log/packages/get_pkginfo ] && [ "$OPTION_PYTHON" = false ]; then
         # get_pkginfoのダウンロードとインストール
         GET_PKGINFO_FILE_NAME=$(pkgname_by_openssl $HOST $MINIMUM_DIR_PATH "get_pkginfo")
         if [ -e $GET_PKGINFO_FILE_NAME ]; then
@@ -268,21 +270,21 @@ if [ ! -e /var/log/packages/get_pkginfo ] && [ $OPTION_PYTHON = false ]; then
 fi 
 
 # Pythonかget_pkginfoが無いか、get_pkginfoまたはPythonだけをインストール指示された場合は終了
-if [ ! -e /var/log/packages/Python ] || [ ! -e /var/log/packages/get_pkginfo ] || [ $OPTION_GET_PKGINFO == true ] || [ $OPTION_PYTHON == true ]; then
+if [ ! -e /var/log/packages/Python ] || [ ! -e /var/log/packages/get_pkginfo ] || [ "$OPTION_GET_PKGINFO" = true ] || [ "$OPTION_PYTHON" = true ]; then
         exit 0
 fi
 
 OPTIONS=""
 
-if [ $OPTION_AUTOINSTALL == true ]; then
+if [ "$OPTION_AUTOINSTALL" = true ]; then
         OPTIONS+="-a "
 fi
 
-if [ $OPTION_DOWNLOAD == true ]; then
+if [ "$OPTION_DOWNLOAD" = true ]; then
         OPTIONS+="-d "
 fi
 
-if [ $OPTION_LOCALBLOCK == true ]; then
+if [ "$OPTION_LOCALBLOCK" = true ]; then
         OPTIONS+="-l "
         for block in "${LOCALBLOCK_ARGS[@]}"; do
                 OPTIONS+="$block "
@@ -349,7 +351,18 @@ for number in "${NUMBERS[@]}"; do
                        ;;
        esac
 
-       yes | get_pkginfo $OPTIONS $OPTIONS_NUM
+       if $OPTION_AUTOINSTALL; then
+               # -a/--autoinstallが指定されている場合はsudoを使用するかの確認にyesを使用
+               if $OPTION_DEBUG; then
+                       echo "yes | get_pkginfo $OPTIONS $OPTIONS_NUM"
+               fi
+               yes | get_pkginfo $OPTIONS $OPTIONS_NUM
+       else
+               if $OPTION_DEBUG; then
+                       echo "get_pkginfo $OPTIONS $OPTIONS_NUM"
+               fi
+               get_pkginfo $OPTIONS $OPTIONS_NUM
+       fi
 done
 
 exit 0

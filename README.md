@@ -39,7 +39,7 @@ Options:
   -p, --python            Download and Install Python only
   -g, --get_pkginfo       Download and Install get_pkginfo only
   NUMBERS                 Specify numbers in the range 0-16
-     Example: ./get_category 2 4 6-8
+     Example: get_category 2 4 6-8
 
 Plamo Linux Category
   0: 00_base 1: 01_minimum 2: 02_devel 3: 03_libs 4: 04_x11

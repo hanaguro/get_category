@@ -29,7 +29,7 @@ $ get_category 0-3
 
 ```
 $ get_category --help
-Usage: ./get_category [OPTIONS] [NUMBERS]
+Usage: get_category [OPTIONS] [NUMBERS]
 Options:
   -a, --autoinstall       Enable auto installation
   -d, --download          Enable download

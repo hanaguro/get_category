@@ -28,7 +28,7 @@ $ get_category 0-3
 ヘルプメッセージを参照してください。
 
 ```
-$ ./get_category --help
+$ get_category --help
 Usage: ./get_category [OPTIONS] [NUMBERS]
 Options:
   -a, --autoinstall       Enable auto installation

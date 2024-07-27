@@ -110,12 +110,6 @@ while [[ $# -gt 0 ]]; do
         esac
 done
 
-# -a と -d は同時に使用できない
-if $OPTION_AUTOINSTALL && $OPTION_DOWNLOAD; then
-        echo "Error: Options -a and -d cannot be used together."
-        exit 1
-fi
-
 
 # rootになるか確認
 if $OPTION_AUTOINSTALL || [ ! -e /var/log/packages/get_pkginfo ] || [ ! -e /var/log/packages/Python ]; then

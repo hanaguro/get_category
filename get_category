@@ -112,7 +112,7 @@ done
 
 
 # rootになるか確認
-if $OPTION_AUTOINSTALL || [ ! -e /var/log/packages/get_pkginfo ] || [ ! -e /var/log/packages/Python ]; then
+if $OPTION_AUTOINSTALL || [ ! -e /var/log/packages/get_pkginfo ] || { [ ! -e /var/log/packages/Python ] && [ ! -e /var/log/packages/XPython ]; }; then
         if [ $(id -u) -ne 0 ]; then
           read -p "Do you want to install as root? [y/N] " ans
           if [ "x$ans" = "xY" ] || [ "x$ans" = "xy" ]; then
@@ -231,7 +231,7 @@ EOF
     rm "$temp_file"
 }
 
-if [ ! -e /var/log/packages/Python ] && [ "$OPTION_GET_PKGINFO" = false ]; then
+if { [ ! -e /var/log/packages/Python ] && [ ! -e /var/log/packages/XPython ]; } && [ "$OPTION_GET_PKGINFO" = false ]; then
         # Pythonのダウンロードとインストール
         PYTHON_FILE_NAME=$(pkgname_by_openssl $HOST $DEVEL_DIR_PATH "Python")
         if [ -e $PYTHON_FILE_NAME ]; then
@@ -264,7 +264,7 @@ if [ ! -e /var/log/packages/get_pkginfo ] && [ "$OPTION_PYTHON" = false ]; then
 fi 
 
 # Pythonかget_pkginfoが無いか、get_pkginfoまたはPythonだけをインストール指示された場合は終了
-if [ ! -e /var/log/packages/Python ] || [ ! -e /var/log/packages/get_pkginfo ] || [ "$OPTION_GET_PKGINFO" = true ] || [ "$OPTION_PYTHON" = true ]; then
+if { [ ! -e /var/log/packages/Python ] && [ ! -e /var/log/packages/XPython ]; } || [ ! -e /var/log/packages/get_pkginfo ] || [ "$OPTION_GET_PKGINFO" = true ] || [ "$OPTION_PYTHON" = true ]; then
         exit 0
 fi
 
